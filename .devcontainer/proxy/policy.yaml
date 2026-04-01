@@ -22,11 +22,21 @@ domains:
   - mcr.microsoft.com
   - r2.cloudflarestorage.com
 
-  # AI APIs
+  # AI APIs — Anthropic
   - "*.anthropic.com"
   - claude.ai
   - "*.claude.ai"
+
+  # AI APIs — OpenAI / Codex (required)
   - api.openai.com
+  - auth.openai.com
+  - platform.openai.com
+  - chatgpt.com
+  - chat.openai.com
+
+  # AI APIs — OpenAI / Codex (optional: telemetry)
+  # Uncomment if Codex shows telemetry errors
+  # - ab.chatgpt.com
 
   # Telemetry / Monitoring
   - sentry.io
