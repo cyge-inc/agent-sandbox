@@ -1,0 +1,38 @@
+services:
+  proxy:
+    build:
+      context: ./proxy
+      dockerfile: Dockerfile
+    cap_drop:
+      - ALL
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python3",
+          "-c",
+          "import socket; s=socket.create_connection(('localhost',8080),2); s.close()",
+        ]
+      interval: 2s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    restart: on-failure
+
+  agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        TZ: ${TZ:-Asia/Tokyo}
+        CLAUDE_CODE_VERSION: latest
+        GIT_DELTA_VERSION: "0.18.2"
+        ZSH_IN_DOCKER_VERSION: "1.2.0"
+        CODEX_VERSION: latest
+    command: /bin/sh -c "while sleep 1000; do :; done"
+    privileged: true
+    volumes:
+      - ..:/workspace:cached
+    depends_on:
+      proxy:
+        condition: service_healthy

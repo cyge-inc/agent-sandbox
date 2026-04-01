@@ -1,0 +1,47 @@
+{
+  "name": "Agent Sandbox",
+  "initializeCommand": "mkdir -p $HOME/.codex $HOME/.claude $HOME/.config/gh && touch $HOME/.gitconfig",
+  "dockerComposeFile": "docker-compose.yml",
+  "service": "agent",
+  "shutdownAction": "stopCompose",
+  "features": {
+    "ghcr.io/devcontainers/features/docker-in-docker:2.14.0": {}
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "anthropic.claude-code",
+        "openai.chatgpt",
+        "eamodio.gitlens"
+      ],
+      "settings": {
+        "terminal.integrated.defaultProfile.linux": "zsh",
+        "http.proxy": "http://proxy:8080",
+        "http.noProxy": "localhost,127.0.0.1,::1,host.docker.internal"
+      }
+    }
+  },
+  "remoteUser": "node",
+  "mounts": [
+    "source=agent-sandbox-bashhistory-${devcontainerId},target=/commandhistory,type=volume",
+    "source=${localEnv:HOME}/.claude,target=/home/node/.claude,type=bind",
+    "source=${localEnv:HOME}/.config/gh,target=/home/node/.config/gh,type=bind",
+    "source=${localEnv:HOME}/.gitconfig,target=/home/node/.gitconfig.host,type=bind,readonly",
+    "source=${localEnv:HOME}/.ssh,target=/home/node/.ssh,type=bind,readonly",
+    "source=${localEnv:HOME}/.codex,target=/home/node/.codex,type=bind"
+  ],
+  "containerEnv": {
+    "NODE_OPTIONS": "--max-old-space-size=4096",
+    "CLAUDE_CONFIG_DIR": "/home/node/.claude",
+    "CODEX_HOME": "/home/node/.codex",
+    "POWERLEVEL9K_DISABLE_GITSTATUS": "true"
+  },
+  "remoteEnv": {
+    "HTTP_PROXY": "http://proxy:8080",
+    "HTTPS_PROXY": "http://proxy:8080",
+    "NO_PROXY": "localhost,127.0.0.1,::1,host.docker.internal"
+  },
+  "workspaceFolder": "/workspace",
+  "postStartCommand": "for i in 1 2 3 4 5; do docker info > /dev/null 2>&1 && break; sleep 2; done || sudo /usr/local/share/docker-init.sh ; test -f /home/node/.gitconfig.host && (grep -q 'gitconfig.host' /home/node/.gitconfig 2>/dev/null || git config --global include.path .gitconfig.host) ; sudo /usr/local/bin/init-firewall.sh",
+  "waitFor": "postStartCommand"
+}

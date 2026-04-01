@@ -1,0 +1,41 @@
+mode: enforce
+
+domains:
+  # GitHub
+  - github.com
+  - "*.github.com"
+  - "*.githubusercontent.com"
+  - release-assets.githubusercontent.com
+
+  # Package registries
+  - registry.npmjs.org
+  - "*.npmjs.org"
+  - "*.npmjs.com"
+  - registry-1.docker.io
+  - auth.docker.io
+  - production.cloudflare.docker.com
+  - docker.io
+  - "*.docker.io"
+  - ghcr.io
+  - "*.ghcr.io"
+  - pkg-containers.githubusercontent.com
+  - mcr.microsoft.com
+  - r2.cloudflarestorage.com
+
+  # AI APIs
+  - "*.anthropic.com"
+  - claude.ai
+  - "*.claude.ai"
+  - api.openai.com
+
+  # Telemetry / Monitoring
+  - sentry.io
+  - "*.sentry.io"
+  - statsig.com
+  - "*.statsig.com"
+
+  # VS Code
+  - marketplace.visualstudio.com
+  - vscode.blob.core.windows.net
+  - update.code.visualstudio.com
+  - gallery.vsassets.io
