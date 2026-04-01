@@ -1,52 +1,52 @@
 # Agent Sandbox
 
-Dev Container template for running AI coding agents (Claude Code, Codex) with domain-level network restrictions.
+AIコーディングエージェント（Claude Code、Codex）をドメインレベルのネットワーク制限付きで実行するためのDev Containerテンプレートです。
 
-Uses a **sidecar mitmproxy** container for domain filtering and **iptables** in the agent container to enforce proxy-only outbound access. See [docs/architecture.md](docs/architecture.md) for detailed design.
+**サイドカーmitmproxy**コンテナによるドメインフィルタリングと、エージェントコンテナ内の**iptables**によるプロキシ経由のみのアウトバウンドアクセス制御を使用します。詳細な設計については[docs/architecture.md](docs/architecture.md)を参照してください。
 
-## Quick Start
+## クイックスタート
 
-### Prerequisites
+### 前提条件
 
-- [VS Code](https://code.visualstudio.com/) with [Dev Containers extension](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers)
+- [VS Code](https://code.visualstudio.com/) と [Dev Containers拡張機能](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers)
 - [Docker](https://docs.docker.com/get-docker/)
 
-### Setup
+### セットアップ
 
-1. Use this template to create a new repository, or copy `.devcontainer/` and `.claude/` into an existing project
+1. このテンプレートを使用して新しいリポジトリを作成するか、`.devcontainer/` と `.claude/` を既存のプロジェクトにコピー
 
-2. Open the project in VS Code and run **"Dev Containers: Reopen in Container"** from the command palette
+2. VS Codeでプロジェクトを開き、コマンドパレットから **「Dev Containers: Reopen in Container」** を実行
 
-3. First-time setup inside the container:
+3. コンテナ内での初回セットアップ:
    ```bash
    claude login
    gh auth login
    ```
 
-4. Switch Git remotes to HTTPS (SSH is blocked by iptables):
+4. Gitリモートを HTTPSに切り替え（SSHはiptablesでブロックされます）:
    ```bash
    git remote set-url origin https://github.com/your-org/your-repo.git
    ```
 
-5. Run with full permissions:
+5. フル権限で実行:
    ```bash
    claude --dangerously-skip-permissions
    ```
 
-## What's Included
+## 構成要素
 
-| Component | Purpose |
-|-----------|---------|
-| **proxy container** | mitmproxy with domain allowlist (`enforcer.py` + `policy.yaml`) |
-| **agent container** | node:20 with Claude Code, Codex CLI, DinD, zsh, git-delta |
-| **init-firewall.sh** | UID-based iptables restricting `node` user to proxy only |
-| **pre-tool-use.sh** | PreToolUse hook blocking firewall/proxy bypass commands |
+| コンポーネント | 用途 |
+|--------------|------|
+| **proxy コンテナ** | ドメイン許可リスト付きmitmproxy（`enforcer.py` + `policy.yaml`） |
+| **agent コンテナ** | Claude Code、Codex CLI、DinD、zsh、git-delta搭載のnode:20 |
+| **init-firewall.sh** | `node` ユーザーをプロキシのみに制限するUID基準のiptables |
+| **pre-tool-use.sh** | ファイアウォール/プロキシバイパスコマンドをブロックするPreToolUseフック |
 
-## Customization
+## カスタマイズ
 
-### Domain Allowlist
+### ドメイン許可リスト
 
-Edit `.devcontainer/proxy/policy.yaml`:
+`.devcontainer/proxy/policy.yaml` を編集:
 
 ```yaml
 domains:
@@ -54,76 +54,76 @@ domains:
   - custom-registry.example.com
 ```
 
-Rebuild the container after changes.
+変更後はコンテナを再ビルドしてください。
 
-### Branch Protection
+### ブランチ保護
 
-Edit `.claude/hooks/pre-tool-use.sh`:
+`.claude/hooks/pre-tool-use.sh` を編集:
 
 ```bash
 PROTECTED_BRANCHES="main|develop"
 PUSH_PROTECTED_BRANCHES="main|develop|staging"
 ```
 
-### VS Code Extensions
+### VS Code 拡張機能
 
-Edit the `extensions` array in `.devcontainer/devcontainer.json`.
+`.devcontainer/devcontainer.json` の `extensions` 配列を編集してください。
 
-### Without Docker-in-Docker
+### Docker-in-Dockerなしで使用する場合
 
-If you don't need `docker` / `docker compose` inside the container:
+コンテナ内で `docker` / `docker compose` が不要な場合:
 
-1. Remove the `features` section from `devcontainer.json`
-2. In `docker-compose.yml`, replace `privileged: true` with:
+1. `devcontainer.json` から `features` セクションを削除
+2. `docker-compose.yml` で `privileged: true` を以下に置き換え:
    ```yaml
    cap_add:
      - NET_ADMIN
      - NET_RAW
    ```
-3. In `devcontainer.json`, simplify `postStartCommand` to:
+3. `devcontainer.json` の `postStartCommand` を以下に簡略化:
    ```
    "postStartCommand": "test -f /home/node/.gitconfig.host && (grep -q 'gitconfig.host' /home/node/.gitconfig 2>/dev/null || git config --global include.path .gitconfig.host) ; sudo /usr/local/bin/init-firewall.sh"
    ```
 
-### Base Image
+### ベースイメージ
 
-The agent uses `node:20` because Claude Code and Codex are Node.js tools. If changing:
+Claude CodeとCodexはNode.jsツールのため、エージェントは `node:20` を使用しています。変更する場合:
 
-- Update `remoteUser` in `devcontainer.json`
-- Update `/home/node/` paths in `mounts` and `containerEnv`
-- Update `id -u node` in `init-firewall.sh`
+- `devcontainer.json` の `remoteUser` を更新
+- `mounts` と `containerEnv` 内の `/home/node/` パスを更新
+- `init-firewall.sh` の `id -u node` を更新
 
-## Verification
+## 動作確認
 
-After container startup:
+コンテナ起動後:
 
 ```bash
-# Allowed domain via proxy
+# 許可ドメインへのプロキシ経由アクセス
 sudo -u node env HTTP_PROXY=http://proxy:8080 HTTPS_PROXY=http://proxy:8080 \
   curl -s https://api.github.com/zen
 
-# Blocked domain via proxy
+# ブロックドメインへのプロキシ経由アクセス
 sudo -u node env HTTP_PROXY=http://proxy:8080 HTTPS_PROXY=http://proxy:8080 \
   curl -s https://example.com
 # → 403 Forbidden
 
-# Direct access blocked by iptables
+# iptablesによる直接アクセスのブロック
 sudo -u node curl --noproxy '*' https://example.com
 # → REJECT
 
-# Root is unrestricted (for DinD)
+# rootは制限なし（DinD用）
 sudo curl https://example.com
-# → Success
+# → 成功
 ```
 
-## Security Model
+## セキュリティモデル
 
-This is a **best-effort** safety net. It prevents AI agents from making unintended outbound connections during normal operation. It does not protect against intentional bypass attacks.
+これは**ベストエフォート**のセーフティネットです。AIエージェントが通常操作中に意図しないアウトバウンド接続を行うことを防止します。意図的なバイパス攻撃に対する防御は提供しません。
 
-See [docs/architecture.md](docs/architecture.md) for the full threat model and known limitations.
+脅威モデルと既知の制限事項の全容については[docs/architecture.md](docs/architecture.md)を参照してください。
 
-## References
+## 参考資料
 
-- [mattolson/agent-sandbox](https://github.com/mattolson/agent-sandbox) - mitmproxy + iptables sidecar architecture
-- [Docker Sandbox Network Policies](https://docs.docker.com/ai/sandboxes/network-policies/) - Docker's AI sandbox networking
-- [Claude Code Dev Container](https://github.com/anthropics/claude-code/tree/main/.devcontainer) - Official IP-based reference
+- [mattolson/agent-sandbox](https://github.com/mattolson/agent-sandbox) - mitmproxy + iptablesサイドカーアーキテクチャ
+- [Docker Sandbox Network Policies](https://docs.docker.com/ai/sandboxes/network-policies/) - DockerのAIサンドボックスネットワーキング
+- [Claude Code Dev Container](https://github.com/anthropics/claude-code/tree/main/.devcontainer) - 公式IPベースのリファレンス

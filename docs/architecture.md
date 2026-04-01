@@ -1,106 +1,106 @@
-# Architecture
+# アーキテクチャ
 
-## Overview
+## 概要
 
-This sandbox uses a **sidecar proxy** architecture to restrict network access from AI coding agents (Claude Code, Codex) running inside a Dev Container.
+このサンドボックスは、Dev Container内で動作するAIコーディングエージェント（Claude Code、Codex）からのネットワークアクセスを制限するために、**サイドカープロキシ**アーキテクチャを採用しています。
 
-### References
+### 参考資料
 
-| Source | URL |
+| ソース | URL |
 |--------|-----|
 | mattolson/agent-sandbox | https://github.com/mattolson/agent-sandbox |
 | Docker Sandbox Network Policies | https://docs.docker.com/ai/sandboxes/network-policies/ |
 | Docker and iptables | https://docs.docker.com/engine/network/firewall-iptables/ |
 | Claude Code Dev Container | https://github.com/anthropics/claude-code/tree/main/.devcontainer |
 
-## Architecture Diagram
+## アーキテクチャ図
 
 ```
 +---------------------------------------------------+
-|  Docker Compose Network                           |
+|  Docker Compose ネットワーク                       |
 |                                                   |
 |  +------------------------+  +------------------+ |
-|  |  agent container       |  |  proxy container | |
+|  |  agent コンテナ         |  |  proxy コンテナ   | |
 |  |  (Dev Container)       |  |                  | |
 |  |                        |  |  mitmproxy       | |
 |  |  Claude Code / Codex   |->|  enforcer.py     | |
 |  |  VS Code server        |  |  policy.yaml     | |
 |  |                        |  |                  | |
 |  |  [iptables]            |  |  cap_drop: ALL   | |
-|  |  node: proxy only      |  +--------+---------+ |
-|  |  root: unrestricted    |           |            |
+|  |  node: proxy のみ      |  +--------+---------+ |
+|  |  root: 制限なし         |           |            |
 |  |                        |           v            |
-|  |  [DinD]                |      [Internet]        |
-|  |  docker compose inside |                        |
+|  |  [DinD]                |      [インターネット]    |
+|  |  docker compose 内部   |                        |
 |  +------------------------+                        |
 +---------------------------------------------------+
 ```
 
-## Two-Layer Defense
+## 二層防御
 
-### Layer 1: Proxy Container (mitmproxy)
+### 第1層: プロキシコンテナ（mitmproxy）
 
-The proxy container runs `mitmdump` with a custom addon (`enforcer.py`) that filters HTTPS CONNECT requests by hostname.
+プロキシコンテナは、HTTPS CONNECTリクエストをホスト名でフィルタリングするカスタムアドオン（`enforcer.py`）を使用して `mitmdump` を実行します。
 
-- **Allowed domains**: CONNECT tunnel is established, TLS passes through without interception (no MITM, no CA needed)
-- **Blocked domains**: 403 Forbidden response at CONNECT stage (before TLS handshake)
-- **HTTP plaintext**: Host header is checked against the same allowlist
+- **許可ドメイン**: CONNECTトンネルが確立され、TLSはインターセプトなしでパススルー（MITM不要、CA証明書不要）
+- **ブロックドメイン**: CONNECTステージで403 Forbiddenレスポンスを返す（TLSハンドシェイク前）
+- **HTTP平文**: Hostヘッダーを同じ許可リストで検証
 
-The `tls_clienthello` hook sets `ignore_connection = True` on all connections, ensuring no TLS interception occurs. This means no CA certificate distribution is required.
+`tls_clienthello` フックはすべての接続に対して `ignore_connection = True` を設定し、TLSインターセプトが発生しないことを保証します。これにより、CA証明書の配布は不要です。
 
-### Layer 2: Agent Container (iptables)
+### 第2層: エージェントコンテナ（iptables）
 
-iptables rules restrict only the `node` user (UID-based matching with `-m owner --uid-owner`):
+iptablesルールは `node` ユーザーのみを制限します（`-m owner --uid-owner` によるUID基準のマッチング）:
 
-- `node` user: Can only reach `proxy:8080` via TCP. All other outbound TCP/UDP is REJECT'd
-- `root` / `dockerd`: Unrestricted (required for DinD to pull images and run containers)
-- DNS (UDP/TCP 53): Allowed for all users
-- Docker bridge / host network: Allowed for all users
-- IPv6: Loopback allowed, node user REJECT'd for everything else
+- `node` ユーザー: TCP経由で `proxy:8080` のみ到達可能。その他すべてのアウトバウンドTCP/UDPはREJECT
+- `root` / `dockerd`: 制限なし（DinDによるイメージpullおよびコンテナ実行に必要）
+- DNS（UDP/TCP 53）: 全ユーザー許可
+- Dockerブリッジ / ホストネットワーク: 全ユーザー許可
+- IPv6: ループバックのみ許可、nodeユーザーはそれ以外すべてREJECT
 
-### Why Sidecar?
+### サイドカー方式を採用する理由
 
-| Concern | Single-container | Sidecar |
-|---------|-----------------|---------|
-| Kill proxy | `sudo kill` works | Separate container, unreachable |
-| Modify policy | `sudo vi policy.yaml` works | Separate filesystem, unreachable |
-| Disable iptables | `sudo iptables -F` works | Still works (iptables is in agent), but proxy remains functional |
-| Hook patterns needed | Many (kill, nft, unset, etc.) | Minimal |
+| 懸念事項 | 単一コンテナ | サイドカー |
+|---------|------------|----------|
+| プロキシの停止 | `sudo kill` で可能 | 別コンテナのため到達不可 |
+| ポリシーの改変 | `sudo vi policy.yaml` で可能 | 別ファイルシステムのため到達不可 |
+| iptablesの無効化 | `sudo iptables -F` で可能 | 同様に可能（iptablesはagent内）だが、プロキシは引き続き機能 |
+| 必要なフックパターン | 多数（kill、nft、unset等） | 最小限 |
 
-### Design Differences from mattolson/agent-sandbox
+### mattolson/agent-sandbox との設計差異
 
-| Item | mattolson | This project |
-|------|-----------|-------------|
-| MITM | Yes (CA distribution) | No (CONNECT hostname filtering only) |
-| DinD | No | Yes (docker-in-docker feature) |
-| iptables | Global OUTPUT DROP | UID-based (node only REJECT) |
-| SSH | Fully blocked | Fully blocked (HTTPS remotes required) |
-| HTTP_PROXY | compose `environment` | `remoteEnv` (prevents dockerd inheritance) |
+| 項目 | mattolson | 本プロジェクト |
+|------|-----------|--------------|
+| MITM | あり（CA証明書の配布が必要） | なし（CONNECTホスト名フィルタリングのみ） |
+| DinD | なし | あり（docker-in-docker機能） |
+| iptables | グローバル OUTPUT DROP | UID基準（nodeのみREJECT） |
+| SSH | 完全ブロック | 完全ブロック（HTTPSリモートが必要） |
+| HTTP_PROXY | compose `environment` | `remoteEnv`（dockerdへの継承を防止） |
 
-## Security Model
+## セキュリティモデル
 
-### Threat Model
+### 脅威モデル
 
-**Protected against**: AI coding agents making unintended outbound connections during normal operation (e.g., running tests that call external APIs, installing unexpected packages)
+**防御対象**: AIコーディングエージェントが通常操作中に意図しないアウトバウンド接続を行うこと（例: 外部APIを呼び出すテストの実行、予期しないパッケージのインストール）
 
-**Not protected against**: Intentional bypass attacks (prompt injection causing deliberate circumvention)
+**防御対象外**: 意図的なバイパス攻撃（プロンプトインジェクションによる意図的な迂回）
 
-### Known Limitations
+### 既知の制限事項
 
-| Risk | Reason |
-|------|--------|
-| DNS tunneling | DNS (UDP 53) must be allowed |
-| Exfiltration via allowed domains | GitHub Gist uploads, npm publish, etc. |
-| Container escape via `--privileged` | Required for DinD |
-| DinD child container traffic | FORWARD chain is not restricted (Phase 1) |
-| `sudo iptables -F` to clear rules | iptables is inside agent container; mitigated by PreToolUse Hook |
-| `sudo bash -c "iptables -F"` | Indirect execution bypasses hook pattern matching |
+| リスク | 理由 |
+|-------|------|
+| DNSトンネリング | DNS（UDP 53）を許可する必要がある |
+| 許可ドメイン経由のデータ流出 | GitHub Gistへのアップロード、npm publishなど |
+| `--privileged` によるコンテナエスケープ | DinDに必要 |
+| DinD子コンテナのトラフィック | FORWARDチェーンは未制限（Phase 1） |
+| `sudo iptables -F` によるルールクリア | iptablesはagentコンテナ内にあり、PreToolUse Hookで緩和 |
+| `sudo bash -c "iptables -F"` | 間接実行はフックのパターンマッチングをバイパスする |
 
-## Customization Points
+## カスタマイズポイント
 
-### Domain Allowlist
+### ドメイン許可リスト
 
-Edit `.devcontainer/proxy/policy.yaml` to add or remove allowed domains:
+`.devcontainer/proxy/policy.yaml` を編集して、許可ドメインの追加・削除ができます:
 
 ```yaml
 domains:
@@ -108,22 +108,22 @@ domains:
   - custom-registry.example.com
 ```
 
-Wildcard `*.example.com` matches `sub.example.com` but not `example.com` itself. Add both if needed.
+ワイルドカード `*.example.com` は `sub.example.com` にマッチしますが、`example.com` 自体にはマッチしません。必要に応じて両方追加してください。
 
-### Branch Protection
+### ブランチ保護
 
-Edit `.claude/hooks/pre-tool-use.sh` to change protected branches:
+`.claude/hooks/pre-tool-use.sh` を編集して保護ブランチを変更できます:
 
 ```bash
 PROTECTED_BRANCHES="main|develop"
 PUSH_PROTECTED_BRANCHES="main|develop|staging"
 ```
 
-### Base Image
+### ベースイメージ
 
-The agent Dockerfile uses `node:20` because Claude Code and Codex are Node.js-based tools. If changing the base image:
+agentのDockerfileは、Claude CodeとCodexがNode.jsベースのツールであるため `node:20` を使用しています。ベースイメージを変更する場合:
 
-1. Update `remoteUser` in `devcontainer.json`
-2. Update all `/home/node/` paths in `devcontainer.json` mounts and containerEnv
-3. Update `id -u node` in `init-firewall.sh` to match the new username
-4. Ensure `iptables` and `iproute2` are installed
+1. `devcontainer.json` の `remoteUser` を更新
+2. `devcontainer.json` のマウントおよびcontainerEnv内のすべての `/home/node/` パスを更新
+3. `init-firewall.sh` の `id -u node` を新しいユーザー名に合わせて更新
+4. `iptables` と `iproute2` がインストールされていることを確認
