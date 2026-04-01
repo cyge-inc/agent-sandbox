@@ -77,6 +77,55 @@ iptablesルールは `node` ユーザーのみを制限します（`-m owner --u
 | SSH | 完全ブロック | 完全ブロック（HTTPSリモートが必要） |
 | HTTP_PROXY | compose `environment` | `remoteEnv`（dockerdへの継承を防止） |
 
+## Codexサンドボックスとの統合
+
+### 問題: Codex内蔵サンドボックスとproxyの競合
+
+Codexはデフォルトで `--unshare-net`（bwrap）またはLandlock `ConnectTcp`/`BindTcp` 制限によりネットワークを分離する。これによりDocker DNS (127.0.0.11) が到達不能になり、sidecar proxy (`proxy:8080`) の名前解決が失敗する。
+
+### 解決: `workspace-write` + `network_access = true`
+
+`.codex/config.toml` でサンドボックスモードを設定:
+
+```toml
+sandbox_mode = "workspace-write"
+
+[sandbox_workspace_write]
+network_access = true
+```
+
+- **ファイルシステム**: bwrap（Bubblewrap）によるハード制約。ワークスペースとTMPDIRのみ書き込み可能、`.git`/`.codex` は読み取り専用
+- **ネットワーク**: `network_access = true` によりネットワーク分離を無効化。Docker DNSが到達可能になり、proxy経由の通信が成立。ネットワーク制御はsidecar proxy + iptablesに委譲
+- **sudo**: bwrapは `PR_SET_NO_NEW_PRIVS` を設定。Codexが生成・実行するシェルコマンド内で `sudo` が使えない（Secure modeのみ）
+
+### 実行モード
+
+| モード | コマンド | FS保護 | sudoブロック | ネットワーク | 承認 |
+|--------|---------|--------|-------------|-------------|------|
+| **Secure** (推奨) | `codex --full-auto` | bwrap (ハード) | no_new_privs (ハード) | proxy+iptables (ハード) | on-request |
+| **Degraded** | `codex --sandbox danger-full-access` | なし | なし | proxy+iptables (設定済みだが `sudo` でバイパス可能) | on-request |
+| **Unsafe** | `codex --dangerously-bypass-approvals-and-sandbox` | なし | なし | Degradedと同等 | なし |
+
+Degraded/Unsafe modeでは `node ALL=(ALL) NOPASSWD:ALL` により、`sudo iptables -F` や `docker run --net=host` でネットワーク制御をバイパスできる。これらのモードを使用する場合は、sudoers制限の適用を推奨する（下記「カスタマイズポイント」参照）。
+
+### Claude Code vs Codex
+
+| 防御層 | Claude Code | Codex (Secure mode) |
+|--------|------------|---------------------|
+| ネットワーク | proxy + iptables | proxy + iptables (同等) |
+| ファイルシステム | 制限なし | bwrap workspace-write (ハード) |
+| ツール制御 | PreToolUseフック (ハード) | AGENTS.md (ソフト、助言的) |
+| sudo | フックでブロック (パターンマッチ) | no_new_privs (カーネルレベル) |
+| ブランチ保護 | フックでブロック (ハード) | AGENTS.md (ソフト) |
+
+### AGENTS.md
+
+`AGENTS.md` はCodex向けのソフト制約ファイル。Claude Codeの `pre-tool-use.sh` と同等のルールをLLMへの指示として記述する。
+
+**制限事項**:
+- AGENTS.mdはプロンプトインジェクション等で無視される可能性がある
+- Codexは `AGENTS.md` を階層的に解釈する。サブディレクトリの `AGENTS.md` がルートのルールを上書きするリスクがある
+
 ## セキュリティモデル
 
 ### 脅威モデル
@@ -95,6 +144,11 @@ iptablesルールは `node` ユーザーのみを制限します（`-m owner --u
 | DinD子コンテナのトラフィック | FORWARDチェーンは未制限（Phase 1） |
 | `sudo iptables -F` によるルールクリア | iptablesはagentコンテナ内にあり、PreToolUse Hookで緩和 |
 | `sudo bash -c "iptables -F"` | 間接実行はフックのパターンマッチングをバイパスする |
+| Codex AGENTS.mdルールの無視 | AGENTS.mdは助言的であり強制されない |
+| Codex AGENTS.md階層上書き | サブディレクトリのAGENTS.mdがルートのルールを上書きする可能性 |
+| Codexプロセスのbwrap外動作 | Codex本体のAPI通信はbwrap外。iptablesで制御 |
+| Codex HTTPクライアントのproxy対応 | 要実機検証。proxy未対応の場合iptablesでREJECTされる |
+| Degraded/Unsafe modeでのsudoバイパス | bwrap無効時はno_new_privsが消失し、sudoでiptables/proxyバイパス可能 |
 
 ## カスタマイズポイント
 
@@ -118,6 +172,18 @@ domains:
 PROTECTED_BRANCHES="main|develop"
 PUSH_PROTECTED_BRANCHES="main|develop|staging"
 ```
+
+### sudoers制限（Degraded/Unsafe mode向け強化策）
+
+Codex Degraded/Unsafe modeでは `sudo` によるiptablesバイパスが可能。DinDが不要なユースケースでは、sudoersを制限することでこのリスクを軽減できる:
+
+```bash
+# Dockerfile内で以下に置き換え:
+# node ALL=(ALL) NOPASSWD:ALL
+node ALL=(ALL) NOPASSWD: /usr/local/bin/init-firewall.sh, /usr/local/share/docker-init.sh, /usr/bin/docker
+```
+
+**注意**: この制限を適用するとDinD内での任意パッケージインストール等（`sudo apt-get install`）が使えなくなる。
 
 ### ベースイメージ
 

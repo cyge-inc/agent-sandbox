@@ -1,0 +1,13 @@
+# Agent Sandbox: Codex project-level configuration
+#
+# workspace-write + network_access=true:
+#   - Filesystem: bwrap enforced (workspace writable, .git/.codex read-only)
+#   - Network: Delegated to sidecar proxy + iptables (no --unshare-net)
+#
+# NOTE: Do NOT add [permissions.network] section.
+# Network filtering is handled by the external sidecar proxy.
+# Adding Codex's managed proxy would cause double-proxying.
+sandbox_mode = "workspace-write"
+
+[sandbox_workspace_write]
+network_access = true
